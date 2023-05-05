@@ -1,4 +1,5 @@
 use esp_idf_sys::*;
+use serde::{de::Visitor, Deserialize, Deserializer, Serialize, Serializer};
 
 /// Bluetooth Device address type
 pub enum BLEAddressType {
@@ -50,5 +51,52 @@ impl core::fmt::Display for BLEAddress {
 impl core::fmt::Debug for BLEAddress {
   fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
     write!(f, "{self}")
+  }
+}
+
+impl Serialize for BLEAddress {
+  fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+  where
+    S: Serializer,
+  {
+    let mut bytes = [0; 7];
+    bytes[0] = self.value.type_ as u8;
+    bytes[1..].copy_from_slice(&self.value.val);
+    serializer.serialize_bytes(&bytes)
+  }
+}
+
+impl<'de> Deserialize<'de> for BLEAddress {
+  fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+  where
+    D: Deserializer<'de>,
+  {
+    struct AddrVisitor;
+
+    impl<'de> Visitor<'de> for AddrVisitor {
+      type Value = BLEAddress;
+
+      fn expecting(&self, formatter: &mut core::fmt::Formatter) -> core::fmt::Result {
+        formatter.write_str("8 bytes")
+      }
+
+      fn visit_bytes<E>(self, v: &[u8]) -> Result<Self::Value, E>
+      where
+        E: serde::de::Error,
+      {
+        let ty = match v[0] {
+          _ if v[0] == BLEAddressType::Public as u8 => BLEAddressType::Public,
+          _ if v[0] == BLEAddressType::Random as u8 => BLEAddressType::RandomID,
+          _ if v[0] == BLEAddressType::PublicID as u8 => BLEAddressType::PublicID,
+          _ if v[0] == BLEAddressType::RandomID as u8 => BLEAddressType::RandomID,
+          _ => return Err(E::custom("invalid BLEAddressType")),
+        };
+        let val = <[u8; 6]>::try_from(&v[1..7])
+          .map_err(|_| E::custom("unexpected end of byte sequence"))?;
+        Ok(BLEAddress::new(val, ty))
+      }
+    }
+
+    deserializer.deserialize_bytes(AddrVisitor)
   }
 }
